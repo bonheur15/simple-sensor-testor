@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sensor Data Viewer</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 1rem;
+      background: #f0f0f0;
+    }
+    h2 {
+      margin-top: 1.5rem;
+    }
+    pre {
+      background: #fff;
+      padding: 1rem;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Device Sensor Data</h1>
+
+  <button onclick="requestSensorAccess()">Start Sensors</button>
+
+  <h2>Accelerometer</h2>
+  <pre id="accelerometer">Waiting...</pre>
+
+  <h2>Gyroscope</h2>
+  <pre id="gyroscope">Waiting...</pre>
+
+  <h2>Magnetometer</h2>
+  <pre id="magnetometer">Waiting...</pre>
+
+  <h2>Orientation</h2>
+  <pre id="orientation">Waiting...</pre>
+
+  <script>
+    const accEl = document.getElementById('accelerometer');
+    const gyroEl = document.getElementById('gyroscope');
+    const magEl = document.getElementById('magnetometer');
+    const oriEl = document.getElementById('orientation');
+
+    function requestSensorAccess() {
+      // Handle iOS permission
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission().then(permissionState => {
+          if (permissionState === 'granted') {
+            startMotionSensors();
+          } else {
+            alert('Permission denied for motion sensors.');
+          }
+        }).catch(err => {
+          alert('Error requesting motion permission: ' + err);
+        });
+      } else {
+        startMotionSensors();
+      }
+
+      // Orientation permission (Android doesn't need it)
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(permissionState => {
+          if (permissionState === 'granted') {
+            startOrientationSensor();
+          }
+        }).catch(err => {
+          alert('Error requesting orientation permission: ' + err);
+        });
+      } else {
+        startOrientationSensor();
+      }
+
+      // Magnetometer - needs HTTPS and secure context
+      try {
+        if ('Magnetometer' in window) {
+          const magnetometer = new Magnetometer({ frequency: 60 });
+          magnetometer.addEventListener('reading', () => {
+            magEl.textContent = `X: ${magnetometer.x.toFixed(2)}\nY: ${magnetometer.y.toFixed(2)}\nZ: ${magnetometer.z.toFixed(2)}`;
+          });
+          magnetometer.addEventListener('error', event => {
+            magEl.textContent = `Magnetometer error: ${event.error.name}`;
+          });
+          magnetometer.start();
+        } else {
+          magEl.textContent = 'Magnetometer not supported in this browser.';
+        }
+      } catch (e) {
+        magEl.textContent = 'Magnetometer access failed: ' + e;
+      }
+    }
+
+    function startMotionSensors() {
+      window.addEventListener('devicemotion', (event) => {
+        const acc = event.acceleration || {};
+        const rot = event.rotationRate || {};
+        accEl.textContent =
+          `X: ${acc.x?.toFixed(2) ?? 'N/A'}\n` +
+          `Y: ${acc.y?.toFixed(2) ?? 'N/A'}\n` +
+          `Z: ${acc.z?.toFixed(2) ?? 'N/A'}`;
+
+        gyroEl.textContent =
+          `Alpha: ${rot.alpha?.toFixed(2) ?? 'N/A'}\n` +
+          `Beta: ${rot.beta?.toFixed(2) ?? 'N/A'}\n` +
+          `Gamma: ${rot.gamma?.toFixed(2) ?? 'N/A'}`;
+      });
+    }
+
+    function startOrientationSensor() {
+      window.addEventListener('deviceorientation', (event) => {
+        oriEl.textContent =
+          `Alpha: ${event.alpha?.toFixed(2) ?? 'N/A'}\n` +
+          `Beta: ${event.beta?.toFixed(2) ?? 'N/A'}\n` +
+          `Gamma: ${event.gamma?.toFixed(2) ?? 'N/A'}`;
+      });
+    }
+  </script>
+</body>
+</html>
