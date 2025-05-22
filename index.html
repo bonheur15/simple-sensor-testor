@@ -1,122 +1,381 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sensor Data Viewer</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      padding: 1rem;
-      background: #f0f0f0;
-    }
-    h2 {
-      margin-top: 1.5rem;
-    }
-    pre {
-      background: #fff;
-      padding: 1rem;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      overflow-x: auto;
-    }
-  </style>
-</head>
-<body>
-  <h1>Device Sensor Data</h1>
-
-  <button onclick="requestSensorAccess()">Start Sensors</button>
-
-  <h2>Accelerometer</h2>
-  <pre id="accelerometer">Waiting...</pre>
-
-  <h2>Gyroscope</h2>
-  <pre id="gyroscope">Waiting...</pre>
-
-  <h2>Magnetometer</h2>
-  <pre id="magnetometer">Waiting...</pre>
-
-  <h2>Orientation</h2>
-  <pre id="orientation">Waiting...</pre>
-
-  <script>
-    const accEl = document.getElementById('accelerometer');
-    const gyroEl = document.getElementById('gyroscope');
-    const magEl = document.getElementById('magnetometer');
-    const oriEl = document.getElementById('orientation');
-
-    function requestSensorAccess() {
-      // Handle iOS permission
-      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        DeviceMotionEvent.requestPermission().then(permissionState => {
-          if (permissionState === 'granted') {
-            startMotionSensors();
-          } else {
-            alert('Permission denied for motion sensors.');
-          }
-        }).catch(err => {
-          alert('Error requesting motion permission: ' + err);
-        });
-      } else {
-        startMotionSensors();
-      }
-
-      // Orientation permission (Android doesn't need it)
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(permissionState => {
-          if (permissionState === 'granted') {
-            startOrientationSensor();
-          }
-        }).catch(err => {
-          alert('Error requesting orientation permission: ' + err);
-        });
-      } else {
-        startOrientationSensor();
-      }
-
-      // Magnetometer - needs HTTPS and secure context
-      try {
-        if ('Magnetometer' in window) {
-          const magnetometer = new Magnetometer({ frequency: 60 });
-          magnetometer.addEventListener('reading', () => {
-            magEl.textContent = `X: ${magnetometer.x.toFixed(2)}\nY: ${magnetometer.y.toFixed(2)}\nZ: ${magnetometer.z.toFixed(2)}`;
-          });
-          magnetometer.addEventListener('error', event => {
-            magEl.textContent = `Magnetometer error: ${event.error.name}`;
-          });
-          magnetometer.start();
-        } else {
-          magEl.textContent = 'Magnetometer not supported in this browser.';
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movement Plotter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none; /* Prevents pull-to-refresh issues on mobile */
         }
-      } catch (e) {
-        magEl.textContent = 'Magnetometer access failed: ' + e;
-      }
-    }
+        .sensor-data-fixed {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 8px;
+            border-top: 1px solid #e2e8f0;
+            font-size: 0.75rem;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+        #movementCanvas {
+            border: 1px solid #cbd5e1;
+            touch-action: none; /* Prevent scrolling while interacting with canvas, if needed */
+        }
+        .btn {
+            @apply py-2 px-4 rounded-lg shadow-md transition-colors duration-150 ease-in-out;
+        }
+        .btn-primary {
+            @apply bg-blue-600 text-white hover:bg-blue-700;
+        }
+        .btn-secondary {
+            @apply bg-gray-300 text-gray-800 hover:bg-gray-400;
+        }
+        .btn-warning {
+            @apply bg-yellow-500 text-white hover:bg-yellow-600;
+        }
+        .btn:disabled {
+            @apply bg-gray-400 cursor-not-allowed;
+        }
+        /* Custom message box for alerts */
+        .message-box {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px 20px;
+            border: 1px solid #f5c6cb;
+            border-radius: 8px;
+            z-index: 1000;
+            display: none; /* Hidden by default */
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
 
-    function startMotionSensors() {
-      window.addEventListener('devicemotion', (event) => {
-        const acc = event.acceleration || {};
-        const rot = event.rotationRate || {};
-        accEl.textContent =
-          `X: ${acc.x?.toFixed(2) ?? 'N/A'}\n` +
-          `Y: ${acc.y?.toFixed(2) ?? 'N/A'}\n` +
-          `Z: ${acc.z?.toFixed(2) ?? 'N/A'}`;
+    <div id="customAlertBox" class="message-box"></div>
 
-        gyroEl.textContent =
-          `Alpha: ${rot.alpha?.toFixed(2) ?? 'N/A'}\n` +
-          `Beta: ${rot.beta?.toFixed(2) ?? 'N/A'}\n` +
-          `Gamma: ${rot.gamma?.toFixed(2) ?? 'N/A'}`;
-      });
-    }
+    <div class="w-full max-w-2xl bg-white p-6 rounded-xl shadow-xl">
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl font-bold text-gray-800">Movement Plotter</h1>
+            <p class="text-sm text-gray-600 mt-2">
+                Visualizes your path using device sensors.
+                <strong class="text-red-600">Experimental:</strong> Path is a relative estimate.
+            </p>
+        </header>
 
-    function startOrientationSensor() {
-      window.addEventListener('deviceorientation', (event) => {
-        oriEl.textContent =
-          `Alpha: ${event.alpha?.toFixed(2) ?? 'N/A'}\n` +
-          `Beta: ${event.beta?.toFixed(2) ?? 'N/A'}\n` +
-          `Gamma: ${event.gamma?.toFixed(2) ?? 'N/A'}`;
-      });
-    }
-  </script>
+        <div class="controls mb-4 flex flex-wrap justify-center gap-3">
+            <button id="startButton" class="btn btn-primary">Start Tracking</button>
+            <button id="stopButton" class="btn btn-secondary" disabled>Stop Tracking</button>
+            <button id="resetButton" class="btn btn-warning">Reset Plot</button>
+        </div>
+
+        <div class="mb-4 w-full aspect-[4/3] bg-gray-50 rounded-lg overflow-hidden">
+            <canvas id="movementCanvas"></canvas>
+        </div>
+        
+        <div class="text-center">
+             <p class="text-sm text-gray-700">Status: <span id="status" class="font-semibold">-</span></p>
+        </div>
+    </div>
+
+    <div class="sensor-data-fixed w-full max-w-2xl mx-auto p-3 bg-white rounded-t-lg shadow-lg mt-4">
+        <h2 class="text-lg font-semibold text-gray-700 mb-2 text-center">Live Sensor Data</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div><strong>Orientation (α, β, γ):</strong> <span id="orientationData" class="block truncate">-</span></div>
+            <div><strong>Accelerometer (x, y, z) g:</strong> <span id="accelerometerData" class="block truncate">-</span></div>
+            <div><strong>Gyroscope (α, β, γ) °/s:</strong> <span id="gyroscopeData" class="block truncate">-</span></div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const resetButton = document.getElementById('resetButton');
+        const canvas = document.getElementById('movementCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const orientationDataEl = document.getElementById('orientationData');
+        const accelerometerDataEl = document.getElementById('accelerometerData');
+        const gyroscopeDataEl = document.getElementById('gyroscopeData');
+        const statusEl = document.getElementById('status');
+        const customAlertBox = document.getElementById('customAlertBox');
+
+        // Plotting state
+        let isTracking = false;
+        let path = [];
+        let currentPos = { x: 0, y: 0 };
+        let currentHeading = null; // Degrees, compass heading (0-360, 0 = North)
+        
+        // Sensor data state
+        let previousAccelerationMagnitude = null;
+
+        // Constants
+        const STEP_DISTANCE_PIXELS = 3; // How many pixels to move on canvas per "step"
+        const MOTION_DETECT_THRESHOLD = 1.5; // m/s^2, change in magnitude of accelerationIncludingGravity
+        const INITIAL_POINT_RADIUS = 5;
+        const CURRENT_POINT_RADIUS = 3;
+
+        function showCustomAlert(message, duration = 3000) {
+            customAlertBox.textContent = message;
+            customAlertBox.style.display = 'block';
+            setTimeout(() => {
+                customAlertBox.style.display = 'none';
+            }, duration);
+        }
+
+        function resizeCanvas() {
+            const parent = canvas.parentElement;
+            canvas.width = parent.clientWidth;
+            canvas.height = parent.clientHeight;
+            // After resizing, if tracking is active or path exists, redraw
+            if (path.length > 0) {
+                currentPos = { x: canvas.width / 2, y: canvas.height / 2 }; // Re-center if needed or adjust path
+                // For simplicity, a full reset might be easier on resize if path needs to be relative to new center
+                // Or, redraw path relative to new center if path stores relative movements
+                if (isTracking || path.length > 0) {
+                    drawPath(true); // Redraw, re-centering the start
+                }
+            } else {
+                 // If no path, just ensure origin is set if we were to start drawing
+                currentPos = { x: canvas.width / 2, y: canvas.height / 2 };
+                clearCanvas();
+                drawDot(currentPos.x, currentPos.y, 'blue', INITIAL_POINT_RADIUS, true); // Draw initial start dot
+            }
+        }
+
+        function initCanvas() {
+            resizeCanvas(); // Set initial size
+            window.addEventListener('resize', resizeCanvas); // Adjust on window resize
+            currentPos = { x: canvas.width / 2, y: canvas.height / 2 };
+            path = [{ ...currentPos }]; // Start path at the center
+            clearCanvas();
+            drawDot(currentPos.x, currentPos.y, 'blue', INITIAL_POINT_RADIUS, true);
+            updateStatus("Ready. Press Start.");
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawDot(x, y, color, radius, isStart = false) {
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            if (isStart) {
+                ctx.strokeStyle = 'rgba(0,0,255,0.5)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+        }
+
+        function drawPath(isResizing = false) {
+            clearCanvas();
+            if (path.length === 0) return;
+
+            let plotOriginX = canvas.width / 2;
+            let plotOriginY = canvas.height / 2;
+
+            // If resizing, we need to recalculate all points relative to the new center
+            // For simplicity, let's always draw relative to the first point in the path
+            // and translate the view so the first point appears at canvas center.
+            // This is complex. A simpler approach for now: if resizing, reset path or accept visual shift.
+            // For this version, we'll redraw from the stored absolute canvas coordinates.
+            // This means if canvas resizes, the plot might look shifted if not handled carefully.
+            // The current resizeCanvas tries to recenter the start.
+
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y);
+            drawDot(path[0].x, path[0].y, 'blue', INITIAL_POINT_RADIUS, true); // Start point
+
+            for (let i = 1; i < path.length; i++) {
+                ctx.lineTo(path[i].x, path[i].y);
+            }
+            ctx.strokeStyle = 'green';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Draw current position marker
+            if (path.length > 0) {
+                const lastPoint = path[path.length - 1];
+                drawDot(lastPoint.x, lastPoint.y, 'red', CURRENT_POINT_RADIUS);
+            }
+        }
+        
+        async function requestSensorPermissions() {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const orientationPermission = await DeviceOrientationEvent.requestPermission();
+                    if (orientationPermission !== 'granted') {
+                        showCustomAlert('Orientation permission not granted.');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('Error requesting orientation permission:', error);
+                    showCustomAlert('Error requesting orientation permission.');
+                    return false;
+                }
+            }
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const motionPermission = await DeviceMotionEvent.requestPermission();
+                    if (motionPermission !== 'granted') {
+                        showCustomAlert('Motion permission not granted.');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('Error requesting motion permission:', error);
+                    showCustomAlert('Error requesting motion permission.');
+                    return false;
+                }
+            }
+            return true; // Permissions granted or not needed to be explicitly requested
+        }
+
+        function handleOrientation(event) {
+            if (event.alpha === null) {
+                currentHeading = null; // Cannot determine absolute heading
+                orientationDataEl.textContent = `N/A (alpha is null)`;
+                return;
+            }
+            currentHeading = event.alpha; // 0-360, 0=North
+            orientationDataEl.textContent = `${event.alpha?.toFixed(1)}, ${event.beta?.toFixed(1)}, ${event.gamma?.toFixed(1)}`;
+        }
+
+        function handleMotion(event) {
+            // Accelerometer data (includes gravity)
+            const accG = event.accelerationIncludingGravity;
+            if (accG && accG.x !== null) {
+                accelerometerDataEl.textContent = `${accG.x?.toFixed(2)}, ${accG.y?.toFixed(2)}, ${accG.z?.toFixed(2)}`;
+                
+                const currentMagnitude = Math.sqrt(accG.x**2 + accG.y**2 + accG.z**2);
+
+                if (previousAccelerationMagnitude !== null && currentHeading !== null && isTracking) {
+                    const changeInMagnitude = Math.abs(currentMagnitude - previousAccelerationMagnitude);
+                    if (changeInMagnitude > MOTION_DETECT_THRESHOLD) {
+                        takeStep();
+                    }
+                }
+                previousAccelerationMagnitude = currentMagnitude;
+
+            } else {
+                accelerometerDataEl.textContent = 'N/A';
+            }
+
+            // Gyroscope data (rotation rate)
+            const rotRate = event.rotationRate;
+            if (rotRate && rotRate.alpha !== null) {
+                gyroscopeDataEl.textContent = `${rotRate.alpha?.toFixed(2)}, ${rotRate.beta?.toFixed(2)}, ${rotRate.gamma?.toFixed(2)}`;
+            } else {
+                gyroscopeDataEl.textContent = 'N/A';
+            }
+        }
+
+        function takeStep() {
+            if (currentHeading === null || path.length === 0) return;
+
+            // Convert compass heading (0=N, 90=E) to math angle (0=E, 90=N) in radians
+            // Math angle theta_rad = ( (450 - compass_heading_degrees) % 360 ) * Math.PI / 180;
+            const mathAngleRad = ((450 - currentHeading) % 360) * Math.PI / 180;
+
+            const lastPoint = path[path.length - 1];
+            const newX = lastPoint.x + STEP_DISTANCE_PIXELS * Math.cos(mathAngleRad);
+            const newY = lastPoint.y - STEP_DISTANCE_PIXELS * Math.sin(mathAngleRad); // Minus for Y because canvas Y increases downwards
+
+            // Boundary checks for canvas
+            const boundedX = Math.max(CURRENT_POINT_RADIUS, Math.min(canvas.width - CURRENT_POINT_RADIUS, newX));
+            const boundedY = Math.max(CURRENT_POINT_RADIUS, Math.min(canvas.height - CURRENT_POINT_RADIUS, newY));
+            
+            currentPos = { x: boundedX, y: boundedY };
+            path.push({ ...currentPos });
+            drawPath();
+        }
+
+        async function startTracking() {
+            updateStatus("Requesting permissions...");
+            const permissionsGranted = await requestSensorPermissions();
+            if (!permissionsGranted) {
+                updateStatus("Sensor permissions denied or unavailable.");
+                return;
+            }
+            
+            updateStatus("Initializing sensors...");
+            if (!window.DeviceOrientationEvent || !window.DeviceMotionEvent) {
+                showCustomAlert("Device Orientation or Motion API not supported by this browser.");
+                updateStatus("Sensors not supported.");
+                return;
+            }
+
+            // Reset path and drawing for a fresh start
+            currentPos = { x: canvas.width / 2, y: canvas.height / 2 };
+            path = [{ ...currentPos }];
+            currentHeading = null;
+            previousAccelerationMagnitude = null; // Reset for motion detection
+            clearCanvas();
+            drawDot(currentPos.x, currentPos.y, 'blue', INITIAL_POINT_RADIUS, true);
+
+
+            window.addEventListener('deviceorientation', handleOrientation, true);
+            window.addEventListener('devicemotion', handleMotion, true);
+            
+            isTracking = true;
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            updateStatus("Tracking active...");
+        }
+
+        function stopTracking() {
+            window.removeEventListener('deviceorientation', handleOrientation, true);
+            window.removeEventListener('devicemotion', handleMotion, true);
+            
+            isTracking = false;
+            previousAccelerationMagnitude = null; // Stop motion detection logic
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            updateStatus("Tracking stopped.");
+        }
+
+        function resetPlot() {
+            stopTracking(); // Ensure listeners are off
+            currentPos = { x: canvas.width / 2, y: canvas.height / 2 };
+            path = [{ ...currentPos }];
+            currentHeading = null;
+            previousAccelerationMagnitude = null;
+            clearCanvas();
+            drawDot(currentPos.x, currentPos.y, 'blue', INITIAL_POINT_RADIUS, true); // Draw initial start dot
+            updateStatus("Plot reset. Ready.");
+            // Clear sensor data displays
+            orientationDataEl.textContent = '-';
+            accelerometerDataEl.textContent = '-';
+            gyroscopeDataEl.textContent = '-';
+        }
+        
+        function updateStatus(message) {
+            statusEl.textContent = message;
+            console.log("Status:", message);
+        }
+
+        // Event Listeners for buttons
+        startButton.addEventListener('click', startTracking);
+        stopButton.addEventListener('click', stopTracking);
+        resetButton.addEventListener('click', resetPlot);
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initCanvas();
+        });
+
+    </script>
 </body>
 </html>
